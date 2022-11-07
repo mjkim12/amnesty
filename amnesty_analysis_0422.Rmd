@@ -1,0 +1,274 @@
+---
+title: "amnesty_analysis_0422"
+author: "Myung Jung Kim"
+date: "4/22/2022"
+output: html_document
+---
+
+```{r }
+library(readxl)
+library(tidyverse)
+library(openxlsx)
+library(dplyr)
+
+df <- read_excel("MJK_sva_0411_2.xlsx")
+View(df)
+```
+
+```{r Make Comparison Groups by year-cutoff}
+dim(df) #496
+table(df$sv_addcs) #316 observations with sv=1
+table(df$hram_dummy) #76 SV amnesty
+unique(df$country) #105 unique 
+
+## Remove existing pre-post98/2002 dummy variables
+df <-df%>%
+  dplyr::select(-post98war,-warend_post98,-post2002war,-warend_post2002)
+
+
+## Measure1 (sharpest cut - removing wars that began pre98 and ended post98) 
+table(df$pre98war)
+df$pre98war <- ifelse(df$war_end_yr<1998,1,0)
+df$post98war <- ifelse(df$war_start_yr>=1998, 1,0) ##Must be analyzed in subsets not dummy because wars that crossroad 98 are removed in the middle. Also, post98war==0 can include wars that BEGAN before 98 but that lasted even after 98. (e.g., 95~2002)
+
+table(df$pre98war) #294
+table(df$post98war) #136
+
+df$pre2003war <- ifelse(df$war_end_yr<2003,1,0)
+df$post2003war <- ifelse(df$war_start_yr>=2003, 1,0)
+table(df$pre2003war) #335
+table(df$post2003war) #106
+
+## Alternative: remove wars that began and ended before 98
+cross98wars  <- df%>%
+  filter(war_start_yr<1998, war_end_yr>=1998) #66 obs.
+#=> This has to be removed from post98 analyses because otherwise, post98=0 can inlcude them which causes a misleading result.
+
+true_pre98wars  <- df%>%
+  filter(war_start_yr<1998, war_end_yr<1998) #294 obs.
+
+true_post98wars  <- df%>%
+  filter(war_start_yr>=1998) #136 obs.
+
+dim(df)#496
+
+# 294(pre)+136 (post) + 66 (cross) =  496
+
+
+df$pre2002war <- ifelse(df$war_end_yr<2002,1,0)
+df$post2002war <- ifelse(df$war_start_yr>=2002, 1,0)
+
+## Measure2 (Inclusive one; Ongoing)
+df$warended_pre98<- ifelse(df$war_end_yr<1998, 1, 0)
+df$war_ongoing98<- ifelse(df$war_end_yr<1998, 0, 1) ## The dummy to use
+df$warended_pre2002<- ifelse(df$war_end_yr<2002, 1, 0)
+df$war_ongoing2002<- ifelse(df$war_end_yr<2002, 0, 1) ## The dummy to use
+```
+
+
+```{r Descriptive statistics}
+## Filter the data to include only those had SV by rebels
+df_sv <-df%>%
+  filter(sv_addcs==1) #316 observations
+
+table(df_sv$TNR)
+
+########## Descriptive Statistics ##############
+dim(df_sv) #316 observations
+length(unique(df_sv$ccode)) #74 unqiue states
+length(unique(df_sv$side_b)) #301 unique rebel groups 
+table(df_sv$hram_dummy) #62 out of 316 dyadwars granted SV amnesty
+table(df_sv$sum_hram) #53 out of the 62 wars only gave SV Amnesties ONCE. 
+
+############ H1: The anti-impunity regime makes a null effect on local rebel groups' likelihood of receiving amnesties for serious crimes.######## 
+
+local <- df_sv %>%
+  filter(TNR==0)
+
+tnr <- df_sv %>%
+  filter(TNR==1)
+
+library(lmtest)
+library(sandwich)
+library(coefplot)
+
+##Important note::: I should not use post98war variable here, but instead need to use war_ongoing98 because post98war is not a dummy variable. Those wars that crossed-98 are missing so post98war=0 is not same as pre98=1. 
+
+############# glm using robust standard errors clustered on the state USING "post98" ############
+
+## Local ##
+
+## 1. using post98 as a measure of ICC/UJ  
+fit_local_post98  = glm(hram_dummy ~ post98war +judicialinde  +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap +rebcap+ blood, data=local, family = binomial)
+
+fit_local_robust_post98 <- coeftest(fit_local_post98, vcov. = vcovCL(fit_local_post98, cluster = local$ccode, type = "HC0")) #post98 effect is null
+
+## Adjust standard errors (robust clusterred )
+cov_local_post98 <- vcovCL(fit_local_post98, cluster = local$ccode, type = "HC0")
+robust_se_local_post98 <- sqrt(diag(cov_local_post98))
+
+fit_local_wo.controls_post98 = glm(hram_dummy ~ post98war, data=local, family = binomial)
+
+fit_local_robust_wo.controls_post98  <- coeftest(fit_local_wo.controls_post98, vcov. = vcovCL(fit_local_wo.controls_post98, cluster = local$ccode, type = "HC0")) #negative and significant UNEXPECTED
+
+
+##  TNRs (post98war) ##
+
+## 1. using post98 as a measure of ICC/UJ ******TNR
+fit_tnr_post98  = glm(hram_dummy ~ post98war +judicialinde +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap +rebcap+ blood, data=tnr, family = binomial)
+
+fit_tnr_robust_post98 <- coeftest(fit_tnr_post98, vcov. = vcovCL(fit_tnr_post98, cluster = tnr$ccode, type = "HC0"))
+#war_ongoing98 effect is positive and significant
+
+## Adjust standard errors (robust clusterred )
+cov_tnr_post98 <- vcovCL(fit_tnr_post98, cluster = tnr$ccode, type = "HC0")
+robust_se_tnr_post98 <- sqrt(diag(cov_tnr_post98))
+
+fit_tnr_wo.controls_post98  = glm(hram_dummy ~ post98war, data=tnr, family = binomial)
+
+fit_tnr_robust_wo.controls_post98 <- coeftest(fit_tnr_wo.controls_post98, vcov. = vcovCL(fit_tnr_wo.controls_post98, cluster = tnr$ccode, type = "HC0"))  # null effect without controls
+
+# I think for propensity score matching, I don't need to report things without controls (covariates). Because it makes no sense of using propensity matching if i won't adjust them anyways.
+```
+
+
+```{r visualization}
+library(coefplot)
+library("modelsummary")
+library("ggplot2")
+library(interplot)
+
+
+pal <- hcl.colors(10, "viridis")
+modelplot(fit_tnr_robust_post98, coef_omit = "(Intercept)") + coord_flip() + scale_color_manual(values = pal)
+
+modelplot(fit_local_robust_post98, coef_omit = "(Intercept)") + coord_flip() + scale_color_manual(values = pal)
+
+### Supplementary Table 1 (Robust Logit; Local / TNR Splitted and saw Post98 effect)
+library(stargazer)
+stargazer(fit_local_wo.controls_post98, fit_local_post98, fit_tnr_wo.controls_post98, fit_tnr_post98)
+
+############ Plotting 
+library(coefplot)
+
+multiplot(fit_local_post98,fit_tnr_post98,   
+          coefficients=c('blood', 'fightcap','intensity','numdyads','yearsatwar','terrytory','rebcap','post98war','judicialinde'),
+          newNames=c(blood='Blood Hands (State)', fightcap='Rebel Fight Capability', numdyads='Number of dyads', yearsatwar='Years at War', terrytory = 'Territory War',intensity = 'Conflict Intensity', rebcap = 'Rebel Strength',post98war = 'Post-1998',judicialinde = 'Judicial Independence'), 
+          title = "Local vs. TNRs Coeffecient Plot",
+          xlab = "SV Amnesty",
+          names = c("Local Groups","TNR"))
+```
+
+
+```{r Ongoing98}
+############# Robust Regression using ONGOING98 ############
+## 1. using war_ongoing98 as a measure of ICC/UJ  *****local
+fit_local  = glm(hram_dummy ~ war_ongoing98 +judicialinde  +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap +rebcap+ blood, data=local, family = binomial)
+
+fit_local_robust <- coeftest(fit_local, vcov. = vcovCL(fit_local, cluster = local$ccode, type = "HC0")) #war_ongoing98 effect is null
+
+fit_local_wo.controls = glm(hram_dummy ~ war_ongoing98, data=local, family = binomial)
+
+fit_local_robust_wo.controls  <- coeftest(fit_local_wo.controls, vcov. = vcovCL(fit_local_wo.controls, cluster = local$ccode, type = "HC0")) #negative and slightly significant UNEXPECTED
+
+
+## 1. using war_ongoing98 as a measure of ICC/UJ ******TNR
+fit_tnr  = glm(hram_dummy ~ war_ongoing98 +judicialinde  +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap +rebcap+ blood, data=tnr, family = binomial)
+
+fit_tnr_robust <- coeftest(fit_tnr, vcov. = vcovCL(fit_tnr, cluster = tnr$ccode, type = "HC0")) #war_ongoing98 effect is positive and significant
+
+fit_tnr_wo.controls  = glm(hram_dummy ~ war_ongoing98, data=tnr, family = binomial)
+
+fit_tnr_robust_wo.controls <- coeftest(fit_tnr_wo.controls, vcov. = vcovCL(fit_tnr_wo.controls, cluster = tnr$ccode, type = "HC0")) #war_ongoing98 effect is positive and significant
+
+
+### Multiplot  
+multiplot(fit_local,fit_tnr,   
+          coefficients=c('blood', 'fightcap','intensity','numdyads','yearsatwar','terrytory','rebcap','war_ongoing98','judicialinde'),
+          newNames=c(blood='Blood Hands (State)', fightcap='Rebel Fight Capability', numdyads='Number of dyads', yearsatwar='Years at War', terrytory = 'Territory War',intensity = 'Conflict Intensity', rebcap = 'Rebel Strength',war_ongoing98 = 'Ongoing-1998',judicialinde = 'Judicial Independence'), 
+          title = "Local vs. TNRs Coeffecient Plot",
+          xlab = "SV Amnesty",
+          names = c("Local Groups","TNR"))
+
+```
+
+
+```{r 2002 robustness}
+############ Using Measure 2 (Inclusive & can use interaction) 
+## 1. LOCAL GROUP 
+
+## 2. TNR 2002Ongoing
+# using war_ongoing2002 as a measure of ICC/UJ
+fit_tnr_2002  = glm(hram_dummy ~ war_ongoing2002 +judicialinde + +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap +rebcap+ blood, data=tnr, family = binomial)
+
+fit_tnr2002_robust <- coeftest(fit_tnr_2002, vcov. = vcovCL(fit_tnr_2002, cluster = tnr$ccode, type = "HC0")) #war_ongoing2002 effect is positive (1.439683) and significant (0.002394) 
+
+fit_tnr_2002_wo.controls  = glm(hram_dummy ~ war_ongoing2002, data=tnr, family = binomial)
+
+fit_tnr2002_robust_wo.controls <- coeftest(fit_tnr_2002_wo.controls, vcov. = vcovCL(fit_tnr_2002_wo.controls, cluster = tnr$ccode, type = "HC0")) #war_ongoing2002 effect is positive (1.51934) and significant (0.0001064 ***) 
+
+
+########Using Measure 1 : Sub-analysis ##################
+## Measure1 (sharpest cut - removing wars that began pre98 and ended post98) 
+PRE98war_df <- df_sv%>%
+  filter(pre98war==1)
+
+POST98war_df <- df_sv%>%
+  filter(post98war==1)
+
+PRE2002war_df <- df_sv%>%
+  filter(pre2002war==1)
+
+POST2002war_df <- df_sv%>%
+  filter(post2002war==1)
+
+
+## TNR effect in pre-98 (sv=1) **************MAIN ANLAYSIS In PAPER
+fit_TNR_pre98df_sv = glm(hram_dummy ~ TNR +judicialinde  +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap + rebcap + blood, data = PRE98war_df, family = binomial) 
+
+TNR_Pre98_logit <- coeftest(fit_TNR_pre98df_sv, vcov. = vcovCL(fit_TNR_pre98df_sv, cluster = PRE98war_df$ccode, type = "HC0")) #null
+
+fit_pre98df_sv_wo.controls = glm(hram_dummy ~ TNR, data = PRE98war_df, family = binomial)
+
+Pre98_logit_wo.controls <- coeftest(fit_pre98df_sv_wo.controls, vcov. = vcovCL(fit_pre98df_sv_wo.controls, cluster = PRE98war_df$ccode, type = "HC0")) #null
+
+
+## TNR effect in post-98 (sv=1)
+fit_post98df_sv = glm(hram_dummy ~ TNR +judicialinde  +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap + rebcap+ blood, data = POST98war_df, family = binomial) 
+
+Post98_logit <- coeftest(fit_post98df_sv, vcov. = vcovCL(fit_post98df_sv, cluster = POST98war_df$ccode, type = "HC0"))
+
+fit_post98df_sv_wo.controls = glm(hram_dummy ~ TNR, data = POST98war_df, family = binomial) 
+
+Post98_logit_wo.controls <- coeftest(fit_post98df_sv_wo.controls, vcov. = vcovCL(fit_post98df_sv_wo.controls, cluster = POST98war_df$ccode, type = "HC0"))
+#TNR est: 2.54847   p-value: 5.738e-05 ***
+
+
+##### 2002
+## TNR effect in pre-2002 (sv=1)
+fit_pre2002df_sv = glm(hram_dummy ~ TNR +judicialinde  +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap + rebcap + blood, data = PRE2002war_df, family = binomial)
+
+Pre2002_logit <- coeftest(fit_pre2002df_sv, vcov. = vcovCL(fit_pre2002df_sv, cluster = PRE2002war_df$ccode, type = "HC0")) #null
+
+fit_pre2002df_sv_wo.controls = glm(hram_dummy ~ TNR, data = PRE2002war_df, family = binomial) 
+
+Pre2002_logit_wo.controls <- coeftest(fit_pre2002df_sv_wo.controls, vcov. = vcovCL(fit_pre2002df_sv_wo.controls, cluster = PRE2002war_df$ccode, type = "HC0")) #null
+
+## TNR effect in post-2002 (sv=1)
+fit_post2002df_sv = glm(hram_dummy ~ TNR +judicialinde + demtrans +yearsatwar + terrytory+ intensity + ethnic + numdyads + fightcap + blood, data = POST2002war_df, family = binomial) 
+
+Post2002_logit <- coeftest(fit_post2002df_sv, vcov. = vcovCL(fit_post2002df_sv, cluster = POST2002war_df$ccode, type = "HC0"))# TNR           46.41335    5.482e-14 ***
+
+fit_post2002df_sv_wo.controls = glm(hram_dummy ~ TNR, data = POST2002war_df, family = binomial) 
+
+Post2002_logit_wo.controls <- coeftest(fit_post2002df_sv_wo.controls, vcov. = vcovCL(fit_post2002df_sv_wo.controls, cluster = POST2002war_df$ccode, type = "HC0"))
+#TNR est: 2.62708   p-value: 0.0003873 ***
+
+############### Hypothesis 2 Testing Result #################
+library(stargazer)
+
+stargazer(Pre98_logit_wo.controls,TNR_Pre98_logit, Post98_logit_wo.controls, Post98_logit)
+
+#stargazer(Pre98_logit_wo.controls,Pre98_logit, Post98_logit_wo.controls, Post98_logit, 
+ #         add.lines = list(c("n", nrow(PRE98war_df), nrow(PRE98war_df),nrow(POST98war_df),nrow(POST98war_df))))
+```
